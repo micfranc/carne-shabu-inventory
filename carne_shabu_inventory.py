@@ -209,7 +209,8 @@ with tab1:
     if total_to_cook > 0:
         trays = round(total_to_cook / (50/36), 1)
         batches = round(trays / 36, 2)
-        st.markdown(f'<div style="background:#1a1208;border:1px solid #e05c2a44;border-radius:12px;padding:1.25rem;margin-top:1rem;"><div class="bag-label">Total to Cook</div><div style="font-family:Playfair Display,serif;font-size:2.25rem;font-weight:900;color:#e05c2a;">{total_to_cook} bags</div><div style="display:flex;gap:2rem;margin-top:0.75rem;"><div><div class="bag-label">Trays</div><div style="font-family:DM Mono;font-size:1.25rem;color:#c4984a;">{trays}</div></div><div><div class="bag-label">Batches</div><div style="font-family:DM Mono;font-size:1.25rem;color:#c4984a;">{batches}</div></div></div></div>', unsafe_allow_html=True)
+        lbs = round(total_to_cook / 50 * 10, 1)
+        st.markdown(f'<div style="background:#1a1208;border:1px solid #e05c2a44;border-radius:12px;padding:1.25rem;margin-top:1rem;"><div class="bag-label">Total to Cook</div><div style="font-family:Playfair Display,serif;font-size:2.25rem;font-weight:900;color:#e05c2a;">{total_to_cook} bags</div><div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.75rem;"><div><div class="bag-label">Meat to Buy</div><div style="font-family:DM Mono;font-size:1.25rem;color:#c4984a;">{lbs} lbs</div></div><div><div class="bag-label">Trays</div><div style="font-family:DM Mono;font-size:1.25rem;color:#c4984a;">{trays}</div></div><div><div class="bag-label">Batches</div><div style="font-family:DM Mono;font-size:1.25rem;color:#c4984a;">{batches}</div></div></div></div>', unsafe_allow_html=True)
     else:
         st.markdown('<div style="background:#1a1208;border:1px solid #4caf7a44;border-radius:12px;padding:1.25rem;margin-top:1rem;text-align:center;"><div style="font-family:Playfair Display,serif;font-size:1.5rem;color:#4caf7a;">All orders covered 🎉</div></div>', unsafe_allow_html=True)
 
@@ -323,8 +324,10 @@ with tab1:
                                  f'<span style="font-family:DM Mono;font-size:0.72rem;color:#7a6040;">{v["ordered"]} ordered · {v["in_stock"]} stock → {cook_span}</span>'
                                  f'</div>')
 
+        lbs_sel = round(total_to_cook_sel / 50 * 10, 1) if total_to_cook_sel > 0 else 0
         cook_label = f"{total_to_cook_sel} bags to cook" if total_to_cook_sel > 0 else "All covered ✓"
-        trays_html = (f'<div style="display:flex;gap:2rem;margin-top:0.75rem;">'
+        trays_html = (f'<div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-top:0.75rem;">'
+                      f'<div><div class="bag-label">Meat to Buy</div><div style="font-family:DM Mono;font-size:1.25rem;color:#c4984a;">{lbs_sel} lbs</div></div>'
                       f'<div><div class="bag-label">Trays</div><div style="font-family:DM Mono;font-size:1.25rem;color:#c4984a;">{trays_sel}</div></div>'
                       f'<div><div class="bag-label">Batches</div><div style="font-family:DM Mono;font-size:1.25rem;color:#c4984a;">{batches_sel}</div></div>'
                       f'</div>') if total_to_cook_sel > 0 else ""
