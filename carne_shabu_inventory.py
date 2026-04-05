@@ -87,8 +87,83 @@ FLAVOR_MAP = {
     "spicy lemon pep": "Spicy Lemon Pepper", "ghost pepper": "Ghost Pepper", "ghost pep": "Ghost Pepper",
 }
 
+PACK_MAP = {
+    "Truffle Sea Salt - 1-Pack": {"Truffle Sea Salt": 1},
+    "Lemon Pepper - 1-Pack": {"Lemon Pepper": 1},
+    "Spicy Lemon Pepper - 1-Pack": {"Spicy Lemon Pepper": 1},
+    "Ghost Pepper - 1-Pack": {"Ghost Pepper": 1},
+    "Truffle Sea Salt - 4-Pack": {"Truffle Sea Salt": 4},
+    "Lemon Pepper - 4-Pack": {"Lemon Pepper": 4},
+    "Spicy Lemon Pepper - 4-Pack": {"Spicy Lemon Pepper": 4},
+    "Ghost Pepper - 4-Pack": {"Ghost Pepper": 4},
+    "Truffle Sea Salt - 8-Pack": {"Truffle Sea Salt": 8},
+    "Lemon Pepper - 8-Pack": {"Lemon Pepper": 8},
+    "Spicy Lemon Pepper - 8-Pack": {"Spicy Lemon Pepper": 8},
+    "Ghost Pepper - 8-Pack": {"Ghost Pepper": 8},
+    "Variety Pack": {"Truffle Sea Salt": 1, "Lemon Pepper": 1, "Spicy Lemon Pepper": 1, "Ghost Pepper": 1},
+}
+
 def normalize_flavor(raw):
     return FLAVOR_MAP.get(str(raw).strip().lower(), str(raw).strip())
+
+def parse_shopify_product(product_name, line_qty=1):
+    """Convert Shopify product name + quantity into {flavor: bags}."""
+    product_name = product_name.strip()
+    if product_name in PACK_MAP:
+        return {f: q * line_qty for f, q in PACK_MAP[product_name].items()}
+    for flavor in DEFAULT_FLAVORS:
+        if flavor.lower() in product_name.lower():
+            return {flavor: line_qty}
+    return {}
+
+def parse_shopify_csv(df):
+    """Parse Shopify orders export CSV into order dicts.
+    Handles multi-row orders (one row per line item)."""
+    orders_dict = {}
+    cur_customer = cur_status = cur_fulfillment = cur_date = cur_location = None
+
+    for _, row in df.iterrows():
+        order_name = str(row.get("Name", "")).strip()
+        billing_name = str(row.get("Billing Name", "")).strip()
+
+        if billing_name and billing_name not in ("", "nan"):
+            cur_customer = billing_name
+            cur_status = str(row.get("Financial Status", "")).strip()
+            cur_fulfillment = str(row.get("Fulfillment Status", "")).strip()
+            cur_date = str(row.get("Created at", "")).strip()
+            ship_city = str(row.get("Shipping City", "")).strip()
+            ship_prov = str(row.get("Shipping Province Name", row.get("Shipping Province", ""))).strip()
+            loc_parts = [p for p in [ship_city, ship_prov] if p and p != "nan"]
+            cur_location = ", ".join(loc_parts)
+
+        if order_name not in orders_dict:
+            orders_dict[order_name] = {
+                "order_number": order_name,
+                "customer": cur_customer or "Unknown",
+                "date": cur_date[:10] if cur_date and cur_date != "nan" else "",
+                "status": cur_fulfillment if cur_fulfillment and cur_fulfillment != "nan" else (cur_status or "New"),
+                "location": cur_location or "",
+                "items": {},
+                "total_revenue": 0.0,
+                "source": "shopify",
+                "notes": "",
+            }
+
+        product = str(row.get("Lineitem name", "")).strip()
+        line_qty = int(float(row.get("Lineitem quantity", 0) or 0))
+        line_price = float(row.get("Lineitem price", 0) or 0)
+
+        if product and product != "nan":
+            bags = parse_shopify_product(product, line_qty)
+            for flavor, qty in bags.items():
+                orders_dict[order_name]["items"][flavor] = orders_dict[order_name]["items"].get(flavor, 0) + qty
+            orders_dict[order_name]["total_revenue"] += line_price * line_qty
+
+    result = []
+    for o in orders_dict.values():
+        o["total"] = sum(o["items"].values())
+        result.append(o)
+    return result
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=5)
@@ -162,7 +237,7 @@ st.markdown('<div class="sub-title">🥩 Carne Shabu · Wagyu Jerky</div>', unsa
 st.markdown('<div class="main-title">Inventory</div>', unsafe_allow_html=True)
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📦 Stock & Orders", "➕ New Order", "📥 Import CSV", "🛒 Supplies", "📋 Projects"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📦 Stock & Orders", "➕ New Order", "📥 Import Faire", "🛒 Import Shopify", "🛒 Supplies", "📋 Projects"])
 
 # ── TAB 1 ─────────────────────────────────────────────────────────────────────
 with tab1:
@@ -426,8 +501,71 @@ with tab3:
         except Exception as e:
             st.error(f"Error: {e}")
 
-# ── TAB 4 — Supplies ──────────────────────────────────────────────────────────
+# ── TAB 4 — Import Shopify ────────────────────────────────────────────────────
 with tab4:
+    st.markdown('<div class="section-header">Import Shopify Orders</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family:DM Sans;font-size:0.85rem;color:#a08060;margin-bottom:1rem;">Upload a Shopify orders export CSV. Duplicates are skipped automatically.</div>', unsafe_allow_html=True)
+
+    shopify_file = st.file_uploader("Upload Shopify CSV", type=["csv"], label_visibility="collapsed", key="shopify_upload")
+    if shopify_file:
+        try:
+            sdf = pd.read_csv(shopify_file)
+            sdf.columns = sdf.columns.str.strip()
+            st.markdown('<div class="section-header">Preview</div>', unsafe_allow_html=True)
+            st.dataframe(sdf.head(10), use_container_width=True)
+
+            parsed_shopify = parse_shopify_csv(sdf)
+            existing_nums = {o.get("order_number") for o in orders}
+            new_shopify = [o for o in parsed_shopify if o["order_number"] not in existing_nums]
+
+            st.markdown(
+                f'<div style="font-family:DM Mono;font-size:0.8rem;color:#c4984a;margin:0.75rem 0;">'
+                f'{len(parsed_shopify)} found · {len(new_shopify)} new · '
+                f'{len(parsed_shopify)-len(new_shopify)} already imported</div>',
+                unsafe_allow_html=True)
+
+            for o in parsed_shopify:
+                is_dupe = o["order_number"] in existing_nums
+                items_str = " · ".join([f"{qty} {f}" for f, qty in o["items"].items()])
+                border = "#2e1f0a" if is_dupe else "#c4984a"
+                dupe = (' <span style="color:#7a6040;font-size:0.65rem;">'
+                        '(already imported)</span>') if is_dupe else ""
+                revenue = f" · ${o['total_revenue']:.2f}" if o.get("total_revenue") else ""
+                location = (f" · {o['location']}"
+                            if o.get("location") and o["location"] not in ("", ", ")
+                            else "")
+                st.markdown(f'''
+                <div class="order-card" style="border-left-color:{border};">
+                    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                        <div>
+                            <div class="order-customer">{o["customer"]}{dupe}</div>
+                            <div class="order-date">📅 {o["date"]} · {o["order_number"]} · {o["status"]}{location}{revenue}</div>
+                            <div class="order-details" style="margin-top:0.4rem">{items_str}</div>
+                        </div>
+                        <div class="total-badge">{o["total"]} bags</div>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+
+            if new_shopify:
+                if st.button(f"✅ Import {len(new_shopify)} New Shopify Orders"):
+                    next_id = get_next_id("orders")
+                    for o in new_shopify:
+                        o["id"] = next_id
+                        o["timestamp"] = datetime.now().isoformat()
+                        # Remove total_revenue from the order dict before saving (not in DB schema)
+                        o.pop("total_revenue", None)
+                        next_id += 1
+                        upsert_order(o)
+                    st.success(f"Imported {len(new_shopify)} Shopify orders!")
+                    st.rerun()
+            else:
+                st.info("All Shopify orders already imported.")
+        except Exception as e:
+            st.error(f"Error parsing Shopify CSV: {e}")
+
+# ── TAB 5 — Supplies ──────────────────────────────────────────────────────────
+with tab5:
     st.markdown('<div class="section-header">Supplies Checklist</div>', unsafe_allow_html=True)
     with st.form("add_supply", clear_on_submit=True):
         new_item = st.text_input("Item", placeholder="e.g. Wagyu beef, 1oz bags...")
@@ -475,8 +613,8 @@ with tab4:
                 for s in supplies: delete_supply(s["id"])
                 st.rerun()
 
-# ── TAB 5 — Projects ──────────────────────────────────────────────────────────
-with tab5:
+# ── TAB 6 — Projects ──────────────────────────────────────────────────────────
+with tab6:
     st.markdown('<div class="section-header">Projects</div>', unsafe_allow_html=True)
     st.markdown('<div style="font-family:DM Sans;font-size:0.85rem;color:#a08060;margin-bottom:1rem;">Group orders to see how many bags you need to cook.</div>', unsafe_allow_html=True)
 
